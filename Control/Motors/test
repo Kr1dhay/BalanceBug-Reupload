@@ -1,0 +1,154 @@
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+
+Adafruit_MPU6050 mpu;
+
+const int dirPin_r = 16; 
+const int stepPin_r = 17;
+const int dirPin_l = 15;
+const int stepPin_l = 2;
+
+const int stepsPerRevolution = 200;
+
+bool mpu_begin = false;
+
+float accelXAvg = 0.0, accelYAvg = 0.0, accelZAvg = 0.0;
+float gyroXAvg = 0.0, gyroYAvg = 0.0, gyroZAvg = 0.0;
+
+// Controller variables
+double setpoint = 0.0;
+double input = 0.0;
+double output = 0.0;
+
+double kp = 5.0; // Proportional gain
+double ki = 3.0; // Integral gain
+double kd = 2.0; // Derivative gain
+
+double integralTerm = 0.0;
+double previousInput = 0.0;
+
+void setup(void) {
+  Serial.begin(115200);
+
+  Serial.println("Adafruit MPU6050 test!");
+
+  // Try to initialize MPU6050
+  while (mpu_begin == false) {
+    Serial.println("Not found");
+    if (mpu.begin()) {
+      mpu_begin = true;
+    }
+  }
+  Serial.println("MPU6050 Found!");
+
+  // Motor setup
+  pinMode(dirPin_r, OUTPUT);
+  pinMode(dirPin_l, OUTPUT);
+  pinMode(stepPin_r, OUTPUT);
+  pinMode(stepPin_l, OUTPUT);
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+  calibrateSensors();
+}
+
+void loop() {
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  // Subtract calibration offsets from sensor readings
+  double accelX = a.acceleration.x - accelXAvg;
+  double accelY = a.acceleration.y - accelYAvg;
+  double accelZ = a.acceleration.z - accelZAvg;
+
+  double gyroX = g.gyro.x - gyroXAvg;
+  double gyroY = g.gyro.y - gyroYAvg;
+  double gyroZ = g.gyro.z - gyroZAvg;
+
+  // Calculate the roll angle from accelerometer readings
+  double roll = atan2(accelY, accelZ) * RAD_TO_DEG;
+
+  // Apply the controller to stabilize the roll angle
+  output = computeController(roll);
+
+  // Set motor direction
+  digitalWrite(dirPin_r, HIGH);
+  digitalWrite(dirPin_l, LOW);
+
+  if (gyroY < 0) {
+    // Set motor direction opposite if the gyroscope reading is negative
+    digitalWrite(dirPin_r, LOW);
+    digitalWrite(dirPin_l, HIGH);
+  }
+
+  // Step the motors based on the controller output
+  for (int x = 0; x < stepsPerRevolution; x++) {
+    digitalWrite(stepPin_r, HIGH);
+    digitalWrite(stepPin_l, HIGH);
+    delayMicroseconds(2500);
+    digitalWrite(stepPin_r, LOW);
+    digitalWrite(stepPin_l, LOW);
+    delayMicroseconds(2500);
+  }
+
+  delay(500);
+}
+
+void calibrateSensors() {
+  Serial.println("Starting sensor calibration...");
+  delay(200);
+
+  Serial.println("Keep the sensor stationary!");
+
+  // Accumulate sensor readings for calibration
+  const int numSamples = 200;
+  for (int i = 0; i < numSamples; i++) {
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+
+    // Accumulate accelerometer and gyroscope readings
+    accelXAvg += a.acceleration.x;
+    accelYAvg += a.acceleration.y;
+    accelZAvg += a.acceleration.z;
+    gyroXAvg += g.gyro.x;
+    gyroYAvg += g.gyro.y;
+    gyroZAvg += g.gyro.z;
+
+    delay(10);
+  }
+
+  // Calculate average accelerometer and gyroscope readings
+  accelXAvg /= numSamples;
+  accelYAvg /= numSamples;
+  accelZAvg /= numSamples;
+  gyroXAvg /= numSamples;
+  gyroYAvg /= numSamples;
+  gyroZAvg /= numSamples;
+
+  Serial.println("Calibration complete!");
+  Serial.print("Accelerometer offsets (X, Y, Z): ");
+  Serial.print(accelXAvg);
+  Serial.print(", ");
+  Serial.print(accelYAvg);
+  Serial.print(", ");
+  Serial.println(accelZAvg);
+  Serial.print("Gyroscope offsets (X, Y, Z): ");
+  Serial.print(gyroXAvg);
+  Serial.print(", ");
+  Serial.print(gyroYAvg);
+  Serial.print(", ");
+  Serial.println(gyroZAvg);
+}
+
+double computeController(double input) {
+  double error = setpoint - input;
+  integralTerm += ki * error;
+  double derivativeTerm = kd * (input - previousInput);
+  double output = kp * error + integralTerm + derivativeTerm;
+  previousInput = input;
+  return output;
+}

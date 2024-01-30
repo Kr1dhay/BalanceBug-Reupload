@@ -1,0 +1,15 @@
+{
+    "serviceName": "balance-bug",
+    "containers": {
+        "balance-bug-container": {
+            "image": ":balance-bug.latest.3",
+            "ports": {
+                "3000": "HTTP"
+            }
+        }
+    },
+    "publicEndpoint": {
+        "containerName": "balance-bug-container",
+        "containerPort": 3000
+    }
+}

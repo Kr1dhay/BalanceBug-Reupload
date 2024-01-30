@@ -1,0 +1,94 @@
+#include <I2Cdev.h>
+#include <MPU6050_6Axis_MotionApps20.h>
+
+#define IMU_SCL_PIN 22
+#define IMU_SDA_PIN 21
+#define IMU_INT_PIN 23
+
+static MPU6050 imu;
+
+volatile bool mpuInterrupt = false;
+void dmpDataReady() {
+    mpuInterrupt = true;
+}
+
+float distance_travelled;
+
+void setup() {
+
+  connectToWiFi();
+
+  // SET UP THE MPU6050
+  Wire.begin(IMU_SDA_PIN, IMU_SCL_PIN, 400000);
+  pinMode(IMU_INT_PIN, INPUT);
+  imu.initialize();
+  imu.CalibrateAccel(10);
+  imu.CalibrateGyro(10);
+  imu.setDMPEnabled(true);
+  attachInterrupt(IMU_INT_PIN, dmpDataReady, RISING);
+
+  // SET UP MOTOR OUTPUTS
+  left_stepper.begin(2, 15);
+  left_stepper.spin(0.1);
+  right_stepper.begin(17, 16);
+  right_stepper.spin(0.1);
+}
+
+void loop() {
+
+  // MPU6050 Vars
+  static uint8_t dmp_fifo_buffer[64];
+  static Quaternion quarternion;
+  static VectorFloat gravity;
+  static realAccel aaReal;
+  static VectorFloat gravity;
+  static float yaw_pitch_roll[3];
+
+  if (imu.dmpGetCurrentFIFOPacket(dmp_fifo_buffer)) {
+    // interrupt triggered so we can get the data and then send it at the end
+    imu.dmpGetQuaternion(&quarternion, dmp_fifo_buffer);
+    mpu.dmpGetAccel(&aa, dmp_fifo_buffer);
+    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+    imu.dmpGetYawPitchRoll(yaw_pitch_roll, &quarternion, &aa);
+
+    // ACCELERATION DATA HERE
+    x_accel = aaReal.x;
+    y_accel = aaReal.y;
+    z_accel = aaReal.z;
+
+    // GET THE YAW DATA 
+    yaw_data = yaw_pitch_roll[3] / 3.14 * 180;
+
+    // POST THE DATA HERE
+    // [[x,y,z], distance, yaw_data] MAYBE
+    httpPUTRequest(serverName, "[[" + String(x_accel) + "," + String(y_accel) + "," + String(z_accel) + "], " +
+                    String(distance_travelled) + ", " + String(yaw_data) + "]");
+
+  }
+
+  right_stepper.loop();
+  left_stepper.loop();
+
+  long int initial_time;
+
+  if (command != NULL){
+      // command received and operation about to complete
+      initial_time = millis();
+      if (command == "fwd") {
+      run_motor(-250,+250);
+    } else if (command == "bck") {
+      run_motor(250,-250);
+    } else if (command == "lft") {
+      run_motor(-250,250/4);
+    } else if (command == "rht") {
+      run_motor(-250/4,250);
+    } else if (command == "stop") {
+      run_motor(0,0);
+    } else {}
+  }
+    
+  long int completion_time = millis();
+  time_elapsed = (completion_time - initial_time)/1000; 
+  distance_travelled = 22.5 * time_elapsed; // this is in cm (approx)
+
+}
